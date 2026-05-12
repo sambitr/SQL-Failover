@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: sqlserver-config
-  namespace: subgen
+  namespace:  sql-failover-test
 data:
   # SQL Server configuration
   ACCEPT_EULA: "Y"
@@ -14,7 +14,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: sqlserver
-  namespace: subgen
+  namespace: sql-failover-test
 spec:
   replicas: 1
   selector:
@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
       - name: sqlserver
-        image: dtsdevregistry.azurecr.io/dts/subgen/mssql-subgen:simplify-k8s # this needs to be changed accordingly for HSBC
+        image: mcr.microsoft.com/mssql/server:2025-latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 1433
@@ -60,7 +60,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: sqlserver-service
-  namespace: subgen
+  namespace: sql-failover-test
 spec:
   selector:
     app: sqlserver
@@ -75,7 +75,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: sqlserver-external
-  namespace: subgen
+  namespace: sql-failover-test
 spec:
   selector:
     app: sqlserver
