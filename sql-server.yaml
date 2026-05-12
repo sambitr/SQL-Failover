@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sqlserver-config
+  namespace: sql-failover-test 
+data:
+  # SQL Server configuration
+  ACCEPT_EULA: "Y"
+  SA_PASSWORD: "K8sAdmin1234!"
+  MSSQL_PID: "Developer"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sqlserver
+  namespace: sql-failover-test 
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqlserver
+  template:
+    metadata:
+      labels:
+        app: sqlserver
+    spec:
+      containers:
+      - name: sqlserver
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 1433
+        env:
+        - name: ACCEPT_EULA
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-config
+              key: ACCEPT_EULA
+        - name: SA_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-config
+              key: SA_PASSWORD
+        - name: MSSQL_PID
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-config
+              key: MSSQL_PID
+       
+        resources:
+          requests:
+            memory: "20Gi"
+            cpu: "10"
+          limits:
+            memory: "45Gi"
+            cpu: "30"
+     
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver-service
+  namespace: sql-failover-test 
+spec:
+  selector:
+    app: sqlserver
+  ports:
+  - port: 1433
+    targetPort: 1433
+    protocol: TCP
+  type: ClusterIP
+---
+# External service for SSMS access
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver-external
+  namespace: sql-failover-test 
+spec:
+  selector:
+    app: sqlserver
+  ports:
+  - name: sql
+    port: 1433
+    targetPort: 1433
+    protocol: TCP
+    nodePort: 31433  # External port for SSMS access - different from Docker port 1433
+  type: NodePort
