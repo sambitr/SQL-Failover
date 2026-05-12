@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sqlserver-config
-  namespace:  sql-failover-test
+  name: sqlserver-primary-config
+  namespace:  sql
 data:
   # SQL Server configuration
   ACCEPT_EULA: "Y"
@@ -13,20 +13,20 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sqlserver
-  namespace: sql-failover-test
+  name: sqlserver-primary
+  namespace: sql
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: sqlserver
+      app: sqlserver-primary
   template:
     metadata:
       labels:
-        app: sqlserver
+        app: sqlserver-primary
     spec:
       containers:
-      - name: sqlserver
+      - name: sqlserver-primary
         image: mcr.microsoft.com/mssql/server:2025-latest
         imagePullPolicy: IfNotPresent
         ports:
@@ -35,35 +35,35 @@ spec:
         - name: ACCEPT_EULA
           valueFrom:
             configMapKeyRef:
-              name: sqlserver-config
+              name: sqlserver-primary-config
               key: ACCEPT_EULA
         - name: SA_PASSWORD
           valueFrom:
             configMapKeyRef:
-              name: sqlserver-config
+              name: sqlserver-primary-config
               key: SA_PASSWORD
         - name: MSSQL_PID
           valueFrom:
             configMapKeyRef:
-              name: sqlserver-config
+              name: sqlserver-primary-config
               key: MSSQL_PID
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "1"
+            memory: "512Mi"
+            cpu: "50m"
           limits:
-            memory: "2Gi"
-            cpu: "2"
+            memory: "1Gi"
+            cpu: "100m"
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: sqlserver-service
-  namespace: sql-failover-test
+  name: sqlserver-primary-service
+  namespace: sql
 spec:
   selector:
-    app: sqlserver
+    app: sqlserver-primary
   ports:
   - port: 1433
     targetPort: 1433
@@ -74,11 +74,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: sqlserver-external
-  namespace: sql-failover-test
+  name: sqlserver-primary-external
+  namespace: sql
 spec:
   selector:
-    app: sqlserver
+    app: sqlserver-primary
   ports:
   - name: sql
     port: 1433
