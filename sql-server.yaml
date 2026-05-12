@@ -49,11 +49,11 @@ spec:
               key: MSSQL_PID
         resources:
           requests:
-            memory: "20Gi"
-            cpu: "10"
+            memory: "1Gi"
+            cpu: "1"
           limits:
-            memory: "45Gi"
-            cpu: "30"
+            memory: "2Gi"
+            cpu: "2"
 
 ---
 apiVersion: v1
