@@ -1,0 +1,181 @@
+# ============================================================
+# SQL Server PRIMARY — Always On AG-ready
+# ============================================================
+
+# PersistentVolume for SQL Server Primary
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: sqlserver-primary-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /var/lib/sqldata/sqlserver-primary
+---
+# PersistentVolumeClaim for SQL Server Primary
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sqlserver-primary-pvc
+  namespace: sql
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ConfigMap for SQL Server Primary (non-sensitive config only)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sqlserver-primary-config
+  namespace: sql
+data:
+  ACCEPT_EULA: "Y"
+  MSSQL_PID: "Developer"
+  MSSQL_ENABLE_HADR: "1"          # <-- Required for Always On AG
+  MSSQL_AGENT_ENABLED: "true"      # <-- Useful for AG monitoring jobs
+---
+# StatefulSet for SQL Server Primary
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sqlserver-primary
+  namespace: sql
+spec:
+  serviceName: sqlserver-primary-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqlserver
+      role: primary
+  template:
+    metadata:
+      labels:
+        app: sqlserver
+        role: primary
+    spec:
+      hostname: sql-primary                   # <-- Stable hostname for AG replica name
+      securityContext:
+        fsGroup: 10001                       # <-- GID for mssql user in SQL Server 2025
+      initContainers:
+      - name: fix-permissions
+        image: busybox
+        command: ["sh", "-c", "chown -R 10001:10001 /var/opt/mssql"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: sqlserver-primary-storage
+          mountPath: /var/opt/mssql
+      containers:
+      - name: sqlserver
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 1433
+          name: sql
+        - containerPort: 5022               # <-- AG endpoint port
+          name: ag-endpoint
+        env:
+        - name: ACCEPT_EULA
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-primary-config
+              key: ACCEPT_EULA
+        - name: MSSQL_PID
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-primary-config
+              key: MSSQL_PID
+        - name: MSSQL_ENABLE_HADR
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-primary-config
+              key: MSSQL_ENABLE_HADR
+        - name: MSSQL_AGENT_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-primary-config
+              key: MSSQL_AGENT_ENABLED
+        - name: MSSQL_SA_PASSWORD          # <-- Correct env var name, from Secret
+          valueFrom:
+            secretKeyRef:
+              name: sqlserver-secret
+              key: MSSQL_SA_PASSWORD
+        resources:
+          requests:
+            memory: "2Gi"                   # <-- SQL Server minimum is 2GB
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: sqlserver-primary-storage
+          mountPath: /var/opt/mssql
+        - name: system-dir
+          mountPath: /.system
+        - name: log-dir
+          mountPath: /log
+        - name: tmp-dir
+          mountPath: /tmp
+      volumes:
+      - name: sqlserver-primary-storage
+        persistentVolumeClaim:
+          claimName: sqlserver-primary-pvc
+      - name: system-dir
+        emptyDir: {}
+      - name: log-dir
+        emptyDir: {}
+      - name: tmp-dir
+        emptyDir: {}
+---
+# Headless Service for StatefulSet (stable DNS: sql-primary.sqlserver-primary-service.sql.svc.cluster.local)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver-primary-service
+  namespace: sql
+spec:
+  clusterIP: None                          # <-- Headless for StatefulSet
+  selector:
+    app: sqlserver
+    role: primary
+  ports:
+  - name: sql
+    port: 1433
+    targetPort: 1433
+    protocol: TCP
+  - name: ag-endpoint
+    port: 5022
+    targetPort: 5022
+    protocol: TCP
+---
+# NodePort Service for external SSMS access to Primary
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver-primary-external
+  namespace: sql
+spec:
+  selector:
+    app: sqlserver
+    role: primary
+  ports:
+  - name: sql
+    port: 1433
+    targetPort: 1433
+    protocol: TCP
+    nodePort: 31433
+  - name: ag-endpoint
+    port: 5022
+    targetPort: 5022
+    protocol: TCP
+    nodePort: 31522
+  type: NodePort

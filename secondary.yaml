@@ -1,0 +1,181 @@
+# ============================================================
+# SQL Server SECONDARY — Always On AG-ready
+# ============================================================
+
+# PersistentVolume for SQL Server Secondary
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: sqlserver-secondary-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /var/lib/sqldata/sqlserver-secondary
+---
+# PersistentVolumeClaim for SQL Server Secondary
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sqlserver-secondary-pvc
+  namespace: sql
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ConfigMap for SQL Server Secondary (non-sensitive config only)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sqlserver-secondary-config
+  namespace: sql
+data:
+  ACCEPT_EULA: "Y"
+  MSSQL_PID: "Developer"
+  MSSQL_ENABLE_HADR: "1"
+  MSSQL_AGENT_ENABLED: "true"
+---
+# StatefulSet for SQL Server Secondary
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sqlserver-secondary
+  namespace: sql
+spec:
+  serviceName: sqlserver-secondary-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqlserver
+      role: secondary
+  template:
+    metadata:
+      labels:
+        app: sqlserver
+        role: secondary
+    spec:
+      hostname: sql-secondary               # <-- Stable hostname for AG replica name
+      securityContext:
+        fsGroup: 10001                       # <-- GID for mssql user in SQL Server 2025
+      initContainers:
+      - name: fix-permissions
+        image: busybox
+        command: ["sh", "-c", "chown -R 10001:10001 /var/opt/mssql"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: sqlserver-secondary-storage
+          mountPath: /var/opt/mssql
+      containers:
+      - name: sqlserver
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 1433
+          name: sql
+        - containerPort: 5022
+          name: ag-endpoint
+        env:
+        - name: ACCEPT_EULA
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-secondary-config
+              key: ACCEPT_EULA
+        - name: MSSQL_PID
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-secondary-config
+              key: MSSQL_PID
+        - name: MSSQL_ENABLE_HADR
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-secondary-config
+              key: MSSQL_ENABLE_HADR
+        - name: MSSQL_AGENT_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sqlserver-secondary-config
+              key: MSSQL_AGENT_ENABLED
+        - name: MSSQL_SA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sqlserver-secret
+              key: MSSQL_SA_PASSWORD
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: sqlserver-secondary-storage
+          mountPath: /var/opt/mssql
+        - name: system-dir
+          mountPath: /.system
+        - name: log-dir
+          mountPath: /log
+        - name: tmp-dir
+          mountPath: /tmp
+      volumes:
+      - name: sqlserver-secondary-storage
+        persistentVolumeClaim:
+          claimName: sqlserver-secondary-pvc
+      - name: system-dir
+        emptyDir: {}
+      - name: log-dir
+        emptyDir: {}
+      - name: tmp-dir
+        emptyDir: {}
+---
+# Headless Service for StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver-secondary-service
+  namespace: sql
+spec:
+  clusterIP: None
+  selector:
+    app: sqlserver
+    role: secondary
+  ports:
+  - name: sql
+    port: 1433
+    targetPort: 1433
+    protocol: TCP
+  - name: ag-endpoint
+    port: 5022
+    targetPort: 5022
+    protocol: TCP
+---
+# NodePort Service for external SSMS access to Secondary
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver-secondary-external
+  namespace: sql
+spec:
+  selector:
+    app: sqlserver
+    role: secondary
+  ports:
+  - name: sql
+    port: 1433
+    targetPort: 1433
+    protocol: TCP
+    nodePort: 32433
+  - name: ag-endpoint
+    port: 5022
+    targetPort: 5022
+    protocol: TCP
+    nodePort: 32522
+  type: NodePort
